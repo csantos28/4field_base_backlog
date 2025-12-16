@@ -12,3 +12,6 @@ venv.bak/
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Arquivo com dados sensíveis
+psw.py
