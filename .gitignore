@@ -15,3 +15,6 @@ __pycache__/
 
 # Arquivo com dados sensíveis
 psw.py
+
+# Arquivos temporários de cache
+*.cache
