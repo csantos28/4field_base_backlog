@@ -5,7 +5,7 @@ import sys
 class SystemLogger:
     
     @staticmethod
-    def configure_logger(name: str, log_file: str = 'system_base_online.log') -> logging.Logger:
+    def configure_logger(name: str, log_file: str = '4field_base_backlog.log') -> logging.Logger:
         """
         Configura um logger com handlers para arquivo e console.
         

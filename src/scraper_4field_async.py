@@ -1,9 +1,8 @@
 import asyncio
-from playwright.async_api import async_playwright, Page, Browser, BrowserContext
+from playwright.async_api import async_playwright, Playwright, Page, BrowserContext
 
 from platformdirs import user_downloads_dir
 from pathlib import Path
-from typing import Optional, Tuple
 import time
 
 from src.system_log import SystemLogger
@@ -35,7 +34,17 @@ class Automation4Field:
         self.username = username
         self.password = password
         self.logger = SystemLogger.configure_logger('Automation4Field')
-        self.browser: Browser = None
+        self.selectors = {
+            "login_input": "input.resource-id",
+            "password_input": "input.senha",
+            "submit_button": ".continue",
+            "func_backlog": "//div[h2[normalize-space()='Backlog']]",
+            "home_check": "span.backlog_activities_update_time",
+            "main_loader": "div.progress_bar",
+            "priority_chart": "canvas#consolidated-daily",
+            "export_icon": "div.export-content"        
+        }
+        self.playwright_engine: Playwright = None
         self.context: BrowserContext = None
         self.page: Page = None
         self.download_dir = Path(user_downloads_dir())
@@ -48,15 +57,15 @@ class Automation4Field:
             Page: Página configurada e pronta
         """
 
-        # 🚀 Inicialização direta
-        playwright = await async_playwright().start()
+        # Armazena a instância no atributo tipado
+        self.playwright_engine = await async_playwright().start()
 
         # Cria diretório para perfil persistente
         profile_path = Path("chrome_profile_normal")
         profile_path.mkdir(exist_ok=True)
 
         # ✅ CONTEXTO PERSISTENTE - todas as páginas herdam este perfil
-        self.context = await playwright.chromium.launch_persistent_context(
+        self.context = await self.playwright_engine.chromium.launch_persistent_context(
             user_data_dir=str(profile_path),
             headless=False,
             viewport={'width': 1366, 'height': 768},
@@ -96,13 +105,13 @@ class Automation4Field:
         # 3️⃣ Elementos específicos (opcional)
         if check_elements:
             for selector in check_elements:
-                tasks.append(self.page.wait_for_selector(selector, state='visible', timeout=15000))
+                tasks.append(self.page.wait_for_selector(selector, state='visible', timeout=25000))
         
         # 🔄 Executa tudo em paralelo
         results = await asyncio.gather(*tasks, return_exceptions=False)
         return all(not isinstance(result, Exception) for result in results)
     
-    async def _wait_for_page(self, step_name: str, timeout: int = 60, check_elements: list = None) -> bool:
+    async def _wait_for_page(self, step_name: str, timeout: int = 90, check_elements: list = None) -> bool:
         """
         🚀 Aguardar carregamento completo
         
@@ -148,59 +157,138 @@ class Automation4Field:
             self.logger.error(f"❌ Erro em {step_name}: {e}")
             return False
     
-    async def _login(self) -> bool:
-        """Executa o processo completo de login"""
+    async def _wait_for_loader(self, timeout: int = 60000) -> bool:
+        """
+        Aguarda o desaparecimento do loader e regista o tempo que levou.
+        """
+
+        selector = self.selectors.get("main_loader")
+        start_time = time.perf_counter() # Início do cronómetro
+
+        self.logger.info(f"⏳ Aguardando processamento da visão ({selector})...")
 
         try:
-            # Configuração inicial
-            page = await self._setup_browser()
-            await page.goto(self.login_url)
-            await self._wait_for_page(step_name="Página de Login", check_elements=["input.resource-id", "input.senha"])
-            
-            # Identificando os elementos de login
             try:
-                username_field = self.page.locator("input.resource-id")
-                password_field = self.page.locator("input.senha")
-
-                #⚡Aguarda TODOS em PARALELO
-                await asyncio.gather(
-                    username_field.wait_for(state='visible', timeout=15000),
-                    password_field.wait_for(state='visible', timeout=15000)
-                )
-
-                self.logger.info("✅ Todos elementos de login localizados")
+                # --- ETAPA 1: ESPERAR APARECER ---
+                await self.page.wait_for_selector(selector, state="visible", timeout=5000)
+                self.logger.info("⚡ Loader detectado, processando...")
             
             except Exception as e:
-                self.logger.error(f"❌ Falha ao localizar elementos: {e}")
-                return False
+                # Se não aparecer em 5s, o sistema pode ter sido ultra rápido, ou a transição não disparou o loader.
+                self.logger.info("ℹ️ Loader não apareceu no tempo limite (possível resposta rápida).")
+                return True
+        
+            # --- ETAPA 2: ESPERAR SUMIR ---
+            await self.page.wait_for_selector(selector, state="hidden", timeout=timeout)
             
-            self.logger.info("🖊️ Preenchendo formulário...")
-
-            try:
-                await username_field.fill(self.username)
-                self.logger.info("✅ Usuário preenchido")
-
-                await password_field.fill(self.password)
-                self.logger.info("✅ Senha preenchida")
-
-                await self.page.locator(".continue").click()
-                self.logger.info("✅ Formulário submetido")
-            
-            except Exception as e:
-                self.logger.error(f"❌ Erro no preenchimento: {e}")
-                return False
+            end_time = time.perf_counter() # Fim do cronómetro
+            duration = end_time - start_time
+            self.logger.info(f"✅ Loader finalizado em {duration:.2f} segundos.")
             
             return True
         
         except Exception as e:
+            end_time = time.perf_counter()
+            duration = end_time - start_time
+            self.logger.error(f"❌ Timeout: O loader não desapareceu após {duration:.2f}s. Erro: {e}")
+            return False        
+    
+    async def _safe_fill(self, selector_key: str, value: str) -> bool:
+        """
+        Valida a existência e visibilidade de um campo antes de preenchê-lo.
+        
+        Args:
+            selector_key: A chave do seletor no dicionário self.selectors
+            value: O valor a ser preenchido (senha ou usuário)
+        """ 
+
+        selector = self.selectors.get(selector_key)
+
+        try:
+            # O Playwright já garante a 'actionability' (estável, visível, habilitado) antes de preencher.
+            await self.page.locator(selector).fill(value)
+            self.logger.info(f"✅ Campo '{selector_key}' preenchido.")
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ Erro ao interagir com '{selector_key}' ({selector}): {e}")
+            return False
+
+    async def _login(self) -> bool:
+        """Executa o processo completo de login"""
+
+        try:
+            # 1.⚙️Configuração e Navegação
+            page = await self._setup_browser()
+            await page.goto(self.login_url)
+
+            # 2.⌛Aguarda a página carregar com os seletores centralizados
+            login_ready = await self._wait_for_page(step_name="Página de Login", check_elements=[self.selectors["login_input"], self.selectors["password_input"]])
+
+            if not login_ready:
+                return False
+            
+            # 3.🖊️Preenchimento Validado
+            credentials = {
+                "login_input": self.username,
+                "password_input": self.password
+            }
+
+            self.logger.info("🖊️ Preenchendo formulário...")
+
+            for key, val in credentials.items():
+                sucess = await self._safe_fill(key, val)
+                if not sucess:
+                    return False
+            
+            # 4.🚀Submissão
+            await self.page.locator(self.selectors["submit_button"]).click()
+            self.logger.info("🚀 Formulário enviado. Aguardando resposta do sistema...")
+
+            # 5.🔍Verificação de Sucesso (Home)
+            is_logged = await self._wait_for_page(step_name='Página de Boas Vindas', check_elements=[self.selectors["home_check"]])
+            
+            if is_logged:
+                self.logger.info("✅ Login realizado com sucesso.")
+                return True
+            
+            return False
+        except Exception as e:
             self.logger.error(f"❌ Falha no login: {e}")
+            return False
+    
+    async def _export_data(self):
+        
+        await self.page.locator(self.selectors["func_backlog"]).click()
+
+        # ⌛Aguardando o processamento da visão
+        if await self._wait_for_loader():
+            sucess = await self._wait_for_page(
+                step_name="Visão Backlog", 
+                check_elements=[self.selectors["priority_chart"], self.selectors["export_icon"]]
+                )
+            if sucess:
+                self.logger.info("✅ Deu certo.")
     
     async def close(self):
-        """Fecha o browser"""
+        """Fecha o browser e encerra o motor do Playwright de forma limpa"""
 
-        if self.context:
-            await self.context.close
-            self.logger.info("🔚 Browser fechado.")
+        try:
+            if self.context:
+                await self.context.close()
+                self.logger.info("🔒 Contexto e Browser encerrados.")
+
+            if hasattr(self, 'playwright_engine'):
+                await self.playwright_engine.stop()
+                self.logger.info("🔚 Motor Playwright finalizado.")
+        
+        except Exception as e:
+            self.logger.error(f"⚠️ Erro ao fechar o browser: {e}")
+    
+    async def execute_process_4field(self):
+
+        if await self._login():
+            await self._export_data()
+            return True
 
 
 if __name__ == '__main__':
@@ -210,11 +298,11 @@ if __name__ == '__main__':
         scraper = Automation4Field()
         
         try:
-            sucess = await scraper._login()
+            sucess = await scraper.execute_process_4field()
 
             if sucess:
                 print("✅ Processo concluído com sucesso!")
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
             else:
                 print("❌ Falho no login")
         finally:
