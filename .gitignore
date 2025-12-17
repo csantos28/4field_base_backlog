@@ -21,3 +21,6 @@ psw.py
 
 # Ignorar todos os arquivos .log
 *.log
+
+# Ignorar pasta de perfil do chrome
+chrome_profile_normal
