@@ -4,6 +4,7 @@ from playwright.async_api import async_playwright, Playwright, Page, BrowserCont
 from platformdirs import user_downloads_dir
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 import time
 
 from src.system_log import SystemLogger
@@ -11,24 +12,24 @@ from src.psw import username, password
 
 class Automation4Field:
     """
-    Classe principal para automação do acesso ao sistema 4FIELD da Tim.
-    
-    Attributes:
-        login_url (str): URL do sistema
-        username (str): Login de rede do usuário
-        password (str): Senha do usuário
-        browser (Browser): Instância do browser
-        context (BrowserContext): Contexto do browser
-        page (Page): Página principal
+        Classe principal para automação do acesso ao sistema 4FIELD da Tim.
+        
+        Attributes:
+            login_url (str): URL do sistema
+            username (str): Login de rede do usuário
+            password (str): Senha do usuário
+            browser (Browser): Instância do browser
+            context (BrowserContext): Contexto do browser
+            page (Page): Página principal
     """     
 
     def __init__(self):
         """
-        Inicializa a classe de automação.
-        
-        Args:
-            username (str): Login de rede do usuário
-            password (str): Senha do usuário
+            Inicializa a classe de automação.
+            
+            Args:
+                username (str): Login de rede do usuário
+                password (str): Senha do usuário
         """ 
 
         self.login_url = "https://4field.timbrasil.com.br/login"
@@ -42,20 +43,22 @@ class Automation4Field:
             "fn_backlog": "//div[h2[normalize-space()='Backlog']]",
             "home_check": "span.backlog_activities_update_time",
             "main_loader": "div.progress_bar",
+            "update_time": "span#update-time",
             "priority_chart": "canvas#consolidated-daily",
-            "export_icon": "div.export-content"        
+            "export_icon": "div.export-content"   
         }
         self.playwright_engine: Playwright = None
         self.context: BrowserContext = None
         self.page: Page = None
         self.download_dir = Path(user_downloads_dir())
+        self.last_update_time = None
 
     async def _setup_browser(self) -> Page:
         """
-        Configuração do browser
-        
-        Returns:
-            Page: Página configurada e pronta
+            Configuração do browser
+            
+            Returns:
+                Page: Página configurada e pronta
         """
 
         # Armazena a instância no atributo tipado
@@ -68,7 +71,7 @@ class Automation4Field:
         # ✅ CONTEXTO PERSISTENTE - todas as páginas herdam este perfil
         self.context = await self.playwright_engine.chromium.launch_persistent_context(
             user_data_dir=str(profile_path),
-            headless=False,
+            headless=True,
             viewport={'width': 1366, 'height': 768},
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             accept_downloads=True,
@@ -106,7 +109,7 @@ class Automation4Field:
         # 3️⃣ Elementos específicos (opcional)
         if check_elements:
             for selector in check_elements:
-                tasks.append(self.page.wait_for_selector(selector, state='visible', timeout=25000))
+                tasks.append(self.page.wait_for_selector(selector, state='visible', timeout=60000))
         
         # 🔄 Executa tudo em paralelo
         results = await asyncio.gather(*tasks, return_exceptions=False)
@@ -114,14 +117,13 @@ class Automation4Field:
     
     async def _wait_for_page(self, step_name: str, timeout: int = 90, check_elements: list = None) -> bool:
         """
-        🚀 Aguardar carregamento completo
-        
-        Args:
-            step_name: Nome da etapa para logs
-            timeout: Timeout total em segundos (não cumulativo)
-            check_elements: Lista de seletores para verificar (opcional)
+            🚀 Aguardar carregamento completo
+            
+            Args:
+                step_name: Nome da etapa para logs
+                timeout: Timeout total em segundos (não cumulativo)
+                check_elements: Lista de seletores para verificar (opcional)
         """   
-
         self.logger.info(f"🌐 Aguardando carregamento: {step_name}") 
         start_time = time.time()
 
@@ -151,9 +153,7 @@ class Automation4Field:
                     
                     except:
                         continue
-            
-            return False
-        
+            return False        
         except Exception as e:
             self.logger.error(f"❌ Erro em {step_name}: {e}")
             return False
@@ -162,7 +162,6 @@ class Automation4Field:
         """
         Aguarda o desaparecimento do loader e regista o tempo que levou.
         """
-
         selector = self.selectors.get("main_loader")
         start_time = time.perf_counter() # Início do cronómetro
 
@@ -171,7 +170,7 @@ class Automation4Field:
         try:
             try:
                 # --- ETAPA 1: ESPERAR APARECER ---
-                await self.page.wait_for_selector(selector, state="visible", timeout=5000)
+                await self.page.wait_for_selector(selector, state="visible", timeout=10000)
                 self.logger.info("⚡ Loader detectado, processando...")
             
             except Exception as e:
@@ -196,13 +195,12 @@ class Automation4Field:
     
     async def _safe_fill(self, selector_key: str, value: str) -> bool:
         """
-        Valida a existência e visibilidade de um campo antes de preenchê-lo.
-        
-        Args:
-            selector_key: A chave do seletor no dicionário self.selectors
-            value: O valor a ser preenchido (senha ou usuário)
+            Valida a existência e visibilidade de um campo antes de preenchê-lo.
+            
+            Args:
+                selector_key: A chave do seletor no dicionário self.selectors
+                value: O valor a ser preenchido (senha ou usuário)
         """ 
-
         selector = self.selectors.get(selector_key)
 
         try:
@@ -256,21 +254,30 @@ class Automation4Field:
         except Exception as e:
             self.logger.error(f"❌ Falha no login: {e}")
             return False
-    
+   
     async def _export_data(self) -> Optional[Path]:
-        
+        """
+            Fluxo completo de exportação: clica na imagem de arquivo Excel para exportar e aguarda download,
+            usando o método nativo expect_download do Playwright.
+            
+            Returns:
+                Path: Caminho do arquivo baixado ou None se falhou
+        """        
         await self.page.locator(self.selectors["fn_backlog"]).click()
 
         try:
             # ⌛Aguardando o processamento da visão
             if await self._wait_for_loader():
                 sucess = await self._wait_for_page(
-                    step_name="Visão Backlog", 
+                    step_name="Visão Backlog",
                     check_elements=[self.selectors["priority_chart"], self.selectors["export_icon"]]
                     )
                 
                 if sucess:
                     async with self.page.expect_download(timeout=120000) as download_info:
+                        original_datetime = await self.page.locator(self.selectors["update_time"]).text_content()
+                        self.last_update_time = await self._parse_update_time(original_datetime)
+
                         # 🖱️ Clica na imagem de um arquivo Excel para baixar a base
                         await self.page.locator(self.selectors["export_icon"]).click()
                         self.logger.info("✅ Ícone para exportar a base clicado.")
@@ -294,9 +301,36 @@ class Automation4Field:
         except Exception as e:
             self.logger.error(f"❌ Erro durante exportação: {e}")
             return None
-    
-    async def _validate_download_file(self, file_path: Path) -> bool:
 
+    async def _parse_update_time(self, datetime_str: str) -> str:
+        """
+            Converte o formato de data/hora de %d/%m/%Y %H:%M:%S para %Y-%m-%d %H:%M:%S
+            
+            Args:
+                time_str: String com data no formato original (ex: "20/11/2025 14:35:10")
+                
+            Returns:
+                String com data formatada (ex: "2025-11-20 14:35:10") ou None em caso de erro
+        """    
+        try:
+            dt_obj = datetime.strptime(datetime_str, "%d/%m/%Y %H:%M:%S")
+            parsed = dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+            self.logger.debug(f"✅ Datetime convertido: {datetime_str} -> {parsed}")
+            return parsed
+        except ValueError as e:
+            self.logger.error(f"❌ Erro ao converter formato de data: {e}")
+            return None
+
+    async def _validate_download_file(self, file_path: Path) -> bool:
+        """
+            Validação rápida do arquivo baixado.
+        
+            Args:
+                file_path: Caminho do arquivo a validar
+            
+            Returns:
+                bool: True se o arquivo é válido
+        """
         try:
             if not file_path.exists():
                 return False
@@ -307,11 +341,19 @@ class Automation4Field:
                 self.logger.warning("❌ Arquivo vazio")
                 return False
             
-            with open(file_path,'r', encoding='latin-1') as f:
-                if bool(f.readline()) and (f.readline()):
-                    self.logger.info("✅ CSV validado com sucesso") 
-                    return True
-        
+            for enconding in ['latin-1', 'utf-8']:
+                try:
+                    with open(file_path,'r', encoding=enconding) as f:
+                        # Lê as duas primeiras linhas para validar conteúdo
+                        header = f.readline()
+                        first_row = f.readline()
+                        if bool(header) and bool(first_row):
+                            self.logger.info(f"✅ CSV validado com sucesso (Enconding: {enconding})") 
+                            return True
+                except UnicodeDecodeError:
+                    continue # Tenta o próximo encoding
+            
+            return False
         except Exception as e:
             self.logger.error(f"❌ Falha na leitura do CSV: {e}")
             return False
