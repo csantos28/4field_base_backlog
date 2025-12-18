@@ -3,6 +3,7 @@ from playwright.async_api import async_playwright, Playwright, Page, BrowserCont
 
 from platformdirs import user_downloads_dir
 from pathlib import Path
+from typing import Optional
 import time
 
 from src.system_log import SystemLogger
@@ -38,7 +39,7 @@ class Automation4Field:
             "login_input": "input.resource-id",
             "password_input": "input.senha",
             "submit_button": ".continue",
-            "func_backlog": "//div[h2[normalize-space()='Backlog']]",
+            "fn_backlog": "//div[h2[normalize-space()='Backlog']]",
             "home_check": "span.backlog_activities_update_time",
             "main_loader": "div.progress_bar",
             "priority_chart": "canvas#consolidated-daily",
@@ -256,19 +257,65 @@ class Automation4Field:
             self.logger.error(f"❌ Falha no login: {e}")
             return False
     
-    async def _export_data(self):
+    async def _export_data(self) -> Optional[Path]:
         
-        await self.page.locator(self.selectors["func_backlog"]).click()
+        await self.page.locator(self.selectors["fn_backlog"]).click()
 
-        # ⌛Aguardando o processamento da visão
-        if await self._wait_for_loader():
-            sucess = await self._wait_for_page(
-                step_name="Visão Backlog", 
-                check_elements=[self.selectors["priority_chart"], self.selectors["export_icon"]]
-                )
-            if sucess:
-                self.logger.info("✅ Deu certo.")
+        try:
+            # ⌛Aguardando o processamento da visão
+            if await self._wait_for_loader():
+                sucess = await self._wait_for_page(
+                    step_name="Visão Backlog", 
+                    check_elements=[self.selectors["priority_chart"], self.selectors["export_icon"]]
+                    )
+                
+                if sucess:
+                    async with self.page.expect_download(timeout=120000) as download_info:
+                        # 🖱️ Clica na imagem de um arquivo Excel para baixar a base
+                        await self.page.locator(self.selectors["export_icon"]).click()
+                        self.logger.info("✅ Ícone para exportar a base clicado.")
+
+                    # Obtendo o objeto Download
+                    download = await download_info.value
+
+                    final_name = f"{download.suggested_filename}"
+                    final_path = self.download_dir / final_name
+
+                    await download.save_as(str(final_path))
+                    self.logger.info(f"💾 Download salvo em: {final_path}")
+
+                    if await self._validate_download_file(final_path):
+                        self.logger.info("🎉 Exportação concluída e validada com sucesso!")
+                        return final_path
+                    
+                    await download.delete()
+                    return None
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erro durante exportação: {e}")
+            return None
     
+    async def _validate_download_file(self, file_path: Path) -> bool:
+
+        try:
+            if not file_path.exists():
+                return False
+            
+            file_size = file_path.stat().st_size
+
+            if file_size == 0:
+                self.logger.warning("❌ Arquivo vazio")
+                return False
+            
+            with open(file_path,'r', encoding='latin-1') as f:
+                if bool(f.readline()) and (f.readline()):
+                    self.logger.info("✅ CSV validado com sucesso") 
+                    return True
+        
+        except Exception as e:
+            self.logger.error(f"❌ Falha na leitura do CSV: {e}")
+            return False
+
     async def close(self):
         """Fecha o browser e encerra o motor do Playwright de forma limpa"""
 
@@ -284,6 +331,7 @@ class Automation4Field:
         except Exception as e:
             self.logger.error(f"⚠️ Erro ao fechar o browser: {e}")
     
+
     async def execute_process_4field(self):
 
         if await self._login():
