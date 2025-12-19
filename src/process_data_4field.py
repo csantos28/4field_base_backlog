@@ -154,7 +154,7 @@ class ExcelFileHendler:
         df = df.rename(columns=self.COLUMN_MAPPING)
 
         if self.update_time:
-            self.logger.info(f"ℹ️ INSERINDO update_time: {self.update_time}")
+            self.logger.info(f"ℹ️  INSERINDO update_time: {self.update_time}")
             df.insert(0, "update_time", self.update_time)
         else:
             self.logger.warning("⚠️ Nenhum update_time fornecido")
@@ -162,14 +162,16 @@ class ExcelFileHendler:
         for col in self.DATE_COLUMNS:
             if col in df.columns:
                 try:
-                    # Converte a string original para objeto datetime do Pandas
-                    df[col] = pd.to_datetime(df[col], format=self.DATETIME_FORMAT, errors='coerce', exact=False)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', UserWarning)
+                        # Converte a string original para objeto datetime do Pandas
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
 
                     # Converte o objeto datetime para string no formato ISO (yyyy-mm-dd hh:mm:ss)
-                    df[col] = df[col].dt.strfitme(self.DATETIME_FORMAT_ISO)
+                    df[col] = df[col].dt.strftime(self.DATETIME_FORMAT_ISO).where(df[col].notnull(), None)
                     
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Erro na formatação ISO da coluna {col}: {e}")
+                    self.logger.warning(f"⚠️ Erro no processamento da coluna {col}: {e}")
 
         # Tratamento de IDs e tipagem Segura
         id_cols = ["id_4field", "id_da_atividade"]    
@@ -289,15 +291,16 @@ class ExcelFileHendler:
         try:
             self.logger.info(f"⌛ Carregando arquivo: {file_path.name}")
 
+            file_size_mb = file_path.stat().st_size / (1024 * 1024)
+
             # Verifica tamanho do arquivo para decidir estratégia
             if self._should_use_chunks(file_path):
-                file_size_mb = file_path.stat().st_size / (1024 * 1024)
                 estimated_lines = int(file_path.stat().st_size / self.AVG_LINE_SIZE_KB * 1024)
 
-                self.logger.info(f"ℹ️ Arquivo grande detectado - Tamanho: {file_size_mb:.2f} MB, Linhas estimadas: {estimated_lines} - usando processamento em chunks")
+                self.logger.info(f"ℹ️  Arquivo grande detectado - Tamanho: {file_size_mb:.2f} MB, Linhas estimadas: {estimated_lines} - usando processamento em chunks")
                 return self._load_large_csv(file_path)
             else:
-                self.logger.info(f"ℹ️ Processando como arquivo pequeno: ({file_size_mb:.2f} MB)")
+                self.logger.info(f"ℹ️  Processando como arquivo pequeno: ({file_size_mb:.2f} MB)")
                 return self._load_small_csv(file_path)
         
         except Exception as e:

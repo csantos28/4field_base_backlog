@@ -170,7 +170,7 @@ class VPNConnectionManager:
                 - Mensagem detalhada do resultado
         """
        # 1. Verificação inicial
-        self.logger.info("Verificando se há alguma VPN contecatada...")
+        self.logger.info("📡 Verificando se há alguma VPN contecatada...")
         current_gateway = self._get_active_gateway(force_check=True)
         self._update_current_vpn(current_gateway)
         

@@ -3,12 +3,12 @@ from playwright.async_api import async_playwright, Playwright, Page, BrowserCont
 
 from platformdirs import user_downloads_dir
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from datetime import datetime
 import time
 
-from src.system_log import SystemLogger
-from src.psw import username, password
+from .system_log import SystemLogger
+from .psw import username, password
 
 class Automation4Field:
     """
@@ -41,7 +41,6 @@ class Automation4Field:
             "password_input": "input.senha",
             "submit_button": ".continue",
             "fn_backlog": "//div[h2[normalize-space()='Backlog']]",
-            "home_check": "span.backlog_activities_update_time",
             "main_loader": "div.progress_bar",
             "update_time": "span#update-time",
             "priority_chart": "canvas#consolidated-daily",
@@ -118,7 +117,6 @@ class Automation4Field:
     async def _wait_for_page(self, step_name: str, timeout: int = 90, check_elements: list = None) -> bool:
         """
             🚀 Aguardar carregamento completo
-            
             Args:
                 step_name: Nome da etapa para logs
                 timeout: Timeout total em segundos (não cumulativo)
@@ -165,7 +163,7 @@ class Automation4Field:
         selector = self.selectors.get("main_loader")
         start_time = time.perf_counter() # Início do cronómetro
 
-        self.logger.info(f"⏳ Aguardando processamento da visão ({selector})...")
+        self.logger.info("⏳ Aguardando processamento da visão...")
 
         try:
             try:
@@ -196,7 +194,6 @@ class Automation4Field:
     async def _safe_fill(self, selector_key: str, value: str) -> bool:
         """
             Valida a existência e visibilidade de um campo antes de preenchê-lo.
-            
             Args:
                 selector_key: A chave do seletor no dicionário self.selectors
                 value: O valor a ser preenchido (senha ou usuário)
@@ -244,7 +241,7 @@ class Automation4Field:
             self.logger.info("🚀 Formulário enviado. Aguardando resposta do sistema...")
 
             # 5.🔍Verificação de Sucesso (Home)
-            is_logged = await self._wait_for_page(step_name='Página de Boas Vindas', check_elements=[self.selectors["home_check"]])
+            is_logged = await self._wait_for_page(step_name='Página de Boas Vindas', check_elements=[self.selectors["fn_backlog"]])
             
             if is_logged:
                 self.logger.info("✅ Login realizado com sucesso.")
@@ -255,11 +252,10 @@ class Automation4Field:
             self.logger.error(f"❌ Falha no login: {e}")
             return False
    
-    async def _export_data(self) -> Optional[Path]:
+    async def _export_data(self) -> Tuple[Optional[Path], Optional[str]]:
         """
             Fluxo completo de exportação: clica na imagem de arquivo Excel para exportar e aguarda download,
             usando o método nativo expect_download do Playwright.
-            
             Returns:
                 Path: Caminho do arquivo baixado ou None se falhou
         """        
@@ -293,10 +289,10 @@ class Automation4Field:
 
                     if await self._validate_download_file(final_path):
                         self.logger.info("🎉 Exportação concluída e validada com sucesso!")
-                        return final_path
+                        return final_path, self.last_update_time
                     
                     await download.delete()
-                    return None
+                    return None, None
                 
         except Exception as e:
             self.logger.error(f"❌ Erro durante exportação: {e}")
@@ -305,10 +301,8 @@ class Automation4Field:
     async def _parse_update_time(self, datetime_str: str) -> str:
         """
             Converte o formato de data/hora de %d/%m/%Y %H:%M:%S para %Y-%m-%d %H:%M:%S
-            
             Args:
-                time_str: String com data no formato original (ex: "20/11/2025 14:35:10")
-                
+                time_str: String com data no formato original (ex: "20/11/2025 14:35:10")    
             Returns:
                 String com data formatada (ex: "2025-11-20 14:35:10") ou None em caso de erro
         """    
@@ -324,10 +318,8 @@ class Automation4Field:
     async def _validate_download_file(self, file_path: Path) -> bool:
         """
             Validação rápida do arquivo baixado.
-        
             Args:
                 file_path: Caminho do arquivo a validar
-            
             Returns:
                 bool: True se o arquivo é válido
         """
@@ -359,14 +351,15 @@ class Automation4Field:
             return False
 
     async def close(self):
-        """Fecha o browser e encerra o motor do Playwright de forma limpa"""
+        """Fecha o browser e encerra o motor do Playwright garantindo a liberação de recursos"""
 
         try:
             if self.context:
                 await self.context.close()
                 self.logger.info("🔒 Contexto e Browser encerrados.")
 
-            if hasattr(self, 'playwright_engine'):
+            # Chama o stop() mesmo se o context.close() falhar
+            if hasattr(self, 'playwright_engine') and self.playwright_engine:
                 await self.playwright_engine.stop()
                 self.logger.info("🔚 Motor Playwright finalizado.")
         
@@ -374,11 +367,23 @@ class Automation4Field:
             self.logger.error(f"⚠️ Erro ao fechar o browser: {e}")
     
 
-    async def execute_process_4field(self):
-
-        if await self._login():
-            await self._export_data()
-            return True
+    async def execute_process_4field(self) -> Tuple[bool ,Optional[Path], Optional[str]]:
+        """
+            Executa o fluxo completo de login e exportação.
+            Returns:
+                Tuple: (Sucesso/Falha, Path do arquivo, Tempo de atualização)
+        """
+        try:
+            if await self._login():
+                file_path, update_time = await self._export_data()
+                if file_path:
+                    return True, file_path, update_time
+            
+            return False, None, None
+        except Exception as e:
+            self.logger.error(f"❌ Falha no processo principal: {e}")
+            return False, None, None
+                
 
 
 if __name__ == '__main__':
