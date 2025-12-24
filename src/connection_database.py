@@ -384,21 +384,17 @@ class PostgreSQLHandler:
 
         try:
             with self._get_cursor() as cursor:
+              
+                # 3. Construção da Query Segura
+                query = sql.SQL("COPY {table} ({fields}) FROM STDIN WITH (FORMAT CSV, DELIMITER '\t', NULL '')").format(
+                    table=sql.Identifier(table_name),
+                    fields=sql.SQL(', ').join(map(sql.Identifier, df.columns))
+                )
 
                 self._logger.info(f"ℹ️  Iniciando COPY para a tabela {table_name}...")
-                
-                # Valida se os nomes são identificadores válidos, isso impede que nomes de tabela ou colunas contenham SQL malicioso.
-                safe_table = sql.Identifier(table_name).as_string(cursor)
-                safe_columns = [sql.Identifier(col).as_string(cursor) for col in df.columns]
 
-                # 3. Executa o copy_from
-                cursor.copy_from(
-                    file=buffer,
-                    table=safe_table,
-                    sep= '\t',
-                    columns=safe_columns,
-                    null='' # Define como tratar valores nulos
-                )
+                # 4. Execução direta com o buffer
+                cursor.copy_expert(query, buffer)
 
                 self._logger.info(f"✅ Bulk insert concluído: {len(df)} linhas em '{table_name}'")
         
