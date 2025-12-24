@@ -85,6 +85,8 @@ class MainOrchestrator:
                 else:
                     self.logger.error(f"❌ Carga de dados na tabela: {table_name} falhou.")
                 
+                handler.delete_most_recent_file()
+                
                 return True
         except Exception as e:
             self.logger.error(f"❌ Erro crítico na carga de dados: {e}")
