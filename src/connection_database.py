@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import io
 from typing import Any, Optional, Iterable, Dict, TypeVar, List, Tuple
 import contextlib
 from .system_log import SystemLogger
@@ -359,7 +360,51 @@ class PostgreSQLHandler:
                 return rowcount
         
         except psycopg2.Error as e:
-            self._logger.error(f"Falha ao inserir dados em {table_name}: {e}")
+            self._logger.error(f"❌ Falha ao inserir dados em {table_name}: {e}")
+    
+    def bulk_insert_dataframe(self, df: pd.DataFrame, table_name: str) -> None:
+        """
+            Insere grandes volumes de dados usando o protocolo COPY do PostgreSQL.
+            Args:
+                df: DataFrame a ser salvo
+                table_name: Nome da tabela de destino
+            
+        """ 
+
+        if df.empty:
+            self._logger.warning("❌ DataFrame vazio. Abortando bulk insert.")
+            return
+        
+        # 1. Criam um buffer de texto em memória
+        buffer = io.StringIO()
+
+        # 2. Exporta o DF para o buffer como CSV (sem index e sem cabeçalho)
+        df.to_csv(buffer, index=False, header=False, sep='\t')
+        buffer.seek(0) # Volta para o início do "arquivo" em memória
+
+        try:
+            with self._get_cursor() as cursor:
+
+                self._logger.info(f"ℹ️  Iniciando COPY para a tabela {table_name}...")
+                
+                # Valida se os nomes são identificadores válidos, isso impede que nomes de tabela ou colunas contenham SQL malicioso.
+                safe_table = sql.Identifier(table_name).as_string(cursor)
+                safe_columns = [sql.Identifier(col).as_string(cursor) for col in df.columns]
+
+                # 3. Executa o copy_from
+                cursor.copy_from(
+                    file=buffer,
+                    table=safe_table,
+                    sep= '\t',
+                    columns=safe_columns,
+                    null='' # Define como tratar valores nulos
+                )
+
+                self._logger.info(f"✅ Bulk insert concluído: {len(df)} linhas em '{table_name}'")
+        
+        except Exception as e:
+            self._logger.error(f"❌ Erro no bulk insert: {e}")
+            raise
     
     def truncate_table(self, table_name: str) -> None:
         """

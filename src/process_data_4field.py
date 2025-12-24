@@ -307,20 +307,23 @@ class ExcelFileHendler:
             self.logger.error(f"❌ Erro ao processar arquivo {file_path.name}: {e}")
             return FileProcessingResult(sucess=False, message=f"❌ Erro ao processar arquivo: {str(e)}")
 
-    def process_most_recent_file(self) -> FileProcessingResult:
+    def process_most_recent_file(self, file_path: Optional[Path] = None) -> FileProcessingResult:
         """
-            Processa o arquivo mais recente encontrado.
+            Processa um arquivo específico ou o mais recente se nenhum for fornecido.
             
             Returns:
                 FileProcessingResult com status e dados
         """        
         try:
-            file_path = self._find_most_recent_file()
-            return self._load_to_dataframe(file_path)
+            # Se o orquestrador já possui o caminho, usa ele. Do contrário, busca no disco (fallback).
+            target_path = file_path if file_path else self._find_most_recent_file()
+
+            self.logger.info(f"🎯 Alvo de processamento: {target_path.name}")
+            return self._load_to_dataframe(target_path)
         
         except Exception as e:
             self.logger.error(f"❌ Erro ao processar arquivo mais recente: {e}")
-            return FileProcessingResult(sucess=False, message=f"❌ Erro ao processar arquivo mais recente: {str(e)}")
+            return FileProcessingResult(sucess=False, message=f"❌ Erro ao processar arquivo: {str(e)}")
     
     def delete_most_recent_file(self) -> bool:
         """
@@ -333,7 +336,7 @@ class ExcelFileHendler:
             file_path = self._find_most_recent_file()
             file_path.unlink()
             
-            self.logger.info(f"🪣 Arquivo deletado com sucesso: {file_path}")
+            self.logger.info(f"🪣  Arquivo deletado com sucesso: {file_path}")
             return True
         except Exception as e:
             self.logger.error(f"❌ Erro ao remover arquivo: {e}")

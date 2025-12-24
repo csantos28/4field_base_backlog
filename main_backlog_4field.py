@@ -63,7 +63,9 @@ class MainOrchestrator:
             # 1. Transformação
             handler = ExcelFileHendler()
             handler.update_time = update_time
-            result = handler.process_most_recent_file()
+
+            # Passa como parâmetro o file_path recebido da extração, eliminando a redundância de procurar o arquivo novamente.
+            result = handler.process_most_recent_file(file_path=file_path)
 
             if not result.sucess:
                 self.logger.error(f"❌ Falha no tratamento: {result.message}")
@@ -80,10 +82,8 @@ class MainOrchestrator:
                     db.create_table_from_dataframe(df, table_name)
                     self.logger.info(f"📋 Tabela '{table_name}' criada com base no DataFrame.")
                 
-                if db.save_dataframe(df, table_name):
-                    self.logger.info(f"🎉 Carga de dados concluída com sucesso na tabela: {table_name}")
-                else:
-                    self.logger.error(f"❌ Carga de dados na tabela: {table_name} falhou.")
+                db.bulk_insert_dataframe(df, table_name)
+                self.logger.info(f"🎉 Carga de dados concluída com sucesso na tabela: {table_name}")
                 
                 handler.delete_most_recent_file()
                 
