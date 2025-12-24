@@ -321,3 +321,19 @@ class ExcelFileHendler:
         except Exception as e:
             self.logger.error(f"❌ Erro ao processar arquivo mais recente: {e}")
             return FileProcessingResult(sucess=False, message=f"❌ Erro ao processar arquivo mais recente: {str(e)}")
+    
+    def delete_most_recent_file(self) -> bool:
+        """
+            Remove o arquivo mais recente encontrado.
+            Returns:
+                bool: True se removido com sucesso, False caso contrário
+        """        
+
+        try:
+            file_path = self._find_most_recent_file()
+            file_path.unlink()
+            
+            self.logger.info(f"🪣 Arquivo deletado com sucesso: {file_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ Erro ao remover arquivo: {e}")
